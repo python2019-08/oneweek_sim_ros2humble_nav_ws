@@ -1,0 +1,74 @@
+from launch import LaunchDescription
+from launch.actions import IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import Command, PathJoinSubstitution
+from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
+
+def generate_launch_description():
+    world = PathJoinSubstitution([
+        FindPackageShare('robot_nav_bringup'),
+        'worlds',
+        'office.world.sdf',
+    ])
+
+    robot_description = Command([
+        'xacro ',
+        PathJoinSubstitution([
+            FindPackageShare('robot_nav_description'),
+            'urdf',
+            'robot.urdf.xacro',
+        ]),
+        ' use_gazebo:=true',
+    ])
+
+    gazebo = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                FindPackageShare('gazebo_ros'),
+                'launch',
+                'gazebo.launch.py',
+            ])
+        ]),
+        launch_arguments={'world': world}.items(),
+    )
+
+    robot_state_publisher = Node(
+        package='robot_state_publisher',
+        executable='robot_state_publisher',
+        parameters=[{
+            'use_sim_time': True,
+            'robot_description': robot_description,
+        }],
+        output='screen',
+    )
+ 
+
+    spawn_robot = Node(
+        package='gazebo_ros',
+        executable='spawn_entity.py',
+        arguments=['-topic', 'robot_description', '-entity', 'nav_robot'],
+        output='screen',
+    )
+
+    ekf = Node(
+        package='robot_localization',
+        executable='ekf_node',
+        name='ekf_filter_node',
+        parameters=[
+            PathJoinSubstitution([
+                FindPackageShare('robot_nav_bringup'),
+                'config',
+                'ekf.yaml',
+            ]),
+            {'use_sim_time': True},
+        ],
+        output='screen',
+    )
+
+    return LaunchDescription([
+        gazebo,
+        robot_state_publisher, 
+        spawn_robot,
+        ekf,
+    ])

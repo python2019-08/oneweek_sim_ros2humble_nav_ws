@@ -1,0 +1,42 @@
+# slam_toolbox 参数文件（仿真，建图阶段）
+#
+# 只覆盖与默认值不同的项，其余调参保持节点默认值。
+#
+# 关键点：slam_toolbox 的默认 base_frame 是 base_footprint，
+#         而本机器人的 URDF 根 link 是 base_link，全工程
+#         （URDF / ekf.yaml / nav2_params.yaml）统一使用
+#         map -> odom -> base_link。
+#         不覆盖 base_frame 就会一直报：
+#           [WARN] Failed to compute odom pose
+#           [INFO] Message Filter dropping message: frame 'laser' ... queue is full
+#
+# 注意：这里故意不写 use_sim_time，由启动命令传入（见 guide 10.3），
+#       避免第二周迁移真机时漏改。
+slam_toolbox:
+  ros__parameters:
+    # ---- 坐标系：必须与 URDF / ekf.yaml / nav2_params.yaml 一致 ----
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_link      # 默认是 base_footprint，本机器人必须改
+    scan_topic: /scan
+
+    # 忽略 0.2m 内的数据（过滤车身干扰）
+    min_laser_range: 0.2
+    # 同时建议限制最大距离，避免空房间边界假墙
+    max_laser_range: 8.0
+    resolution: 0.05    
+
+    # 建图用 mapping；以后加载已有地图做定位时改成 localization
+    mode: mapping
+
+    # ---- 扫描队列深度：默认 1 会把所有 scan 丢掉，必须加大 ----
+    # 实测：use_sim_time 下 EKF 的 odom->base_link 时间戳只能取到 /clock 缓存，
+    #       被量化成 0.1s 一格（476.393 -> 476.493）；而 Gazebo 激光插件用的是
+    #       连续仿真时间（476.423 / 476.473 ...），于是每帧 scan 都比"当前最新
+    #       的 TF"新 0.03~0.08s，tf2 判定为未来时刻，查不到 odom<-laser。
+    #       queue_size=1 时队列立刻塞满，过滤器就一直报
+    #         Message Filter dropping message: frame 'laser' ... queue is full
+    #       地图停在第 37 个占据栅格不再变化。
+    #       队列放到 30（约 1.5s 的扫描）后，等下一个 TF 采样（0.1s 后）到达，
+    #       排队中的 scan 就能被正常变换，过滤器不再堵死。
+    scan_queue_size: 30

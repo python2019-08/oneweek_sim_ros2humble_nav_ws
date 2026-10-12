@@ -1,0 +1,155 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <world name="office">
+    <physics name="default" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1</real_time_factor>
+    </physics>
+    <!-- 
+    <include>
+      <uri>model://ground_plane</uri> 
+    </include> 
+    -->
+    <!-- 地面，直接写在world内，不再include model://ground_plane -->
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>5 5</size>
+            </plane>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>5 5</size>
+            </plane>
+          </geometry>
+          <material>
+          <ambient>0.0 0.7 0.0 1</ambient>
+          <diffuse>0.1 0.5 0.1 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 
+    <include>
+      <uri>model://sun</uri> 
+    </include> 
+    -->
+    <!-- 太阳光，直接用light标签，不再include model://sun -->
+    <light name="sun" type="directional">
+      <pose>0 0 10 0 0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.8 0.8 0.8 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <!-- 墙壁示例：左墙 -->
+    <model name="wall_left">
+      <static>true</static>
+      <pose>0 -2.5 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>5 0.1 1</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>5 0.1 1</size></box></geometry>
+          <material><ambient>0.8 0.8 0.8 1</ambient></material>
+        </visual>
+      </link>
+    </model>
+    <!-- 墙壁示例：右墙 -->
+    <model name="wall_right">
+      <static>true</static>
+      <pose>0 2.5 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>5 0.1 1</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>5 0.1 1</size></box></geometry>
+          <material><ambient>0.8 0.8 0.8 1</ambient></material>
+        </visual>
+      </link>
+    </model>
+    <!-- 前墙 -->
+    <model name="wall_front">
+      <static>true</static>
+      <pose>2.5 0 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.1 5 1</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.1 5 1</size></box></geometry>
+          <material><ambient>0.8 0.8 0.8 1</ambient></material>
+        </visual>
+      </link>
+    </model>
+    <!-- 后墙 -->
+    <model name="wall_back">
+      <static>true</static>
+      <pose>-2.5 0 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.1 5 1</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.1 5 1</size></box></geometry>
+          <material><ambient>0.8 0.8 0.8 1</ambient></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ============ 不对称地标：消除空方房间的定位简并 ============
+         空的 5x5 方房间在地图上是 90°/180° 自相似的：AMCL 粒子群在"绕原点转
+         180°"的镜像解上能拿到和真值几乎一样高的似然（实测锁死在那里：
+         map->odom yaw = -178.11°，机器人真值 (1.40,-1.75) 被当成 (-1.45,1.65)），
+         导航于是在镜像坐标系里跑，房间对称时看着"到点了"，一旦有不对称结构就撞。
+         放两个物体，让"镜像假设"必须多解释两个说不通的回波：
+           1) 尺寸、位置都不同，且都不在 x/y 轴、也不在对角线上；
+           2) 两个物体的连线也不经过原点（单一物体理论上仍可能被某个旋转配上）。
+         位置挑选：距原点 >=1.9m（不挡 spawn 点），离墙 >=0.4m，
+         高度都覆盖激光扫描面（雷达 z≈0.26，俯仰 -1.91°）。 -->
+    <model name="pillar_1">
+      <static>true</static>
+      <pose>1.50 1.20 0.50 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.3 0.3 1.0</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.3 0.3 1.0</size></box></geometry>
+          <material>
+            <ambient>0.7 0.35 0.1 1</ambient>
+            <diffuse>0.9 0.5 0.15 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="cabinet_1">
+      <static>true</static>
+      <pose>-1.70 -0.90 0.225 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.6 0.35 0.45</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.6 0.35 0.45</size></box></geometry>
+          <material>
+            <ambient>0.15 0.35 0.6 1</ambient>
+            <diffuse>0.2 0.5 0.8 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+  </world>
+</sdf>
