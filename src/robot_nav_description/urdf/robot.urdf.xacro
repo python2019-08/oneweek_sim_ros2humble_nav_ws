@@ -25,8 +25,22 @@
         ixx="${0.5*mass*r*r}"
         iyy="${mass*(3*r*r + l*l)/12.0}"
         izz="${mass*(3*r*r + l*l)/12.0}"
-        ixy="0.0" 
-        ixz="0.0" 
+        ixy="0.0"
+        ixz="0.0"
+        iyz="0.0"
+        />
+    </inertial>
+  </xacro:macro>
+
+  <xacro:macro name="inertial_sphere" params="mass r">
+    <inertial>
+      <mass value="${mass}"/>
+      <inertia
+        ixx="${0.4*mass*r*r}"
+        iyy="${0.4*mass*r*r}"
+        izz="${0.4*mass*r*r}"
+        ixy="0.0"
+        ixz="0.0"
         iyz="0.0"
         />
     </inertial>
@@ -61,7 +75,17 @@
   <joint name="front_left_wheel_joint" type="continuous">
     <parent link="base_link"/>
     <child link="front_left_wheel"/>
-    <origin xyz="0.15 0.2 0.0" rpy="0 0 0"/>
+    <!-- 驱动轮轴心必须落在 base_link 原点（x=0）上！
+         差速驱动的瞬时旋转中心（ICR）就在驱动轮轴线上。轴心偏离 base_link
+         时，原地转向会让 base_link 绕轴心画圆（实测半径 0.150m，正是原来的
+         x=0.15），于是 odom 位移方向与车头夹角 ≈ 90°。AMCL 的差速运动模型
+         把 delta_rot1 算成 -(90° - dyaw/2)，它的噪声项
+             delta_rot1_noise = min(|rot1|, |rot1 - pi|) ≈ pi/2
+         与步长无关，于是每帧注入
+             sigma_trans = sqrt(a3*d^2 + 2*a4*(pi/2)^2) ≈ 0.47 m
+         而真实位移只有 0.03 m —— 噪声是信号的 15 倍，粒子云直接炸开。
+         这是定位漂移的根因。 -->
+    <origin xyz="0.0 0.2 0.0" rpy="0 0 0"/>
     <axis xyz="0 1 0"/>
     <limit effort="1000" velocity="10"/>
   </joint>
@@ -89,7 +113,8 @@
   <joint name="front_right_wheel_joint" type="continuous">
     <parent link="base_link"/>
     <child link="front_right_wheel"/>
-    <origin xyz="0.15 -0.2 0.0" rpy="0 0 0"/>
+    <!-- 同 front_left_wheel_joint：轴心必须在 x=0。 -->
+    <origin xyz="0.0 -0.2 0.0" rpy="0 0 0"/>
     <axis xyz="0 1 0"/>
     <limit effort="1000" velocity="10"/>
   </joint>
@@ -111,54 +136,58 @@
     <xacro:inertial_cylinder mass="0.5" r="0.05" l="0.05"/>
   </link>
 
-  <!-- ===================== 后从动脚轮 左（固定关节，无驱动） ===================== -->
-  <joint name="back_left_caster_joint" type="fixed">
+  <!-- ===================== 后从动脚轮（固定关节，无驱动） ===================== -->
+  <!-- 驱动轮搬到 base_link 原点后，脚轮也必须改成"前后各一个、走在中心线上"：
+       原来两个脚轮都在 x=-0.15，轴心搬到 0 之后重心正好压在支撑多边形边缘，
+       车会向前栽。中心线上的球体脚轮只负责支撑，mu=0.01 近似无摩擦，
+       不参与转向、不影响 ICR。 -->
+  <joint name="rear_caster_joint" type="fixed">
     <parent link="base_link"/>
-    <child link="back_left_caster"/>
-    <origin xyz="-0.15 0.2 0.0" rpy="0 0 0"/>
+    <child link="rear_caster"/>
+    <origin xyz="-0.20 0.0 0.0" rpy="0 0 0"/>
   </joint>
 
-  <link name="back_left_caster">
+  <link name="rear_caster">
     <visual>
-      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <cylinder radius="0.04" length="0.04"/>
+        <sphere radius="0.05"/>
       </geometry>
       <material name="gray">
         <color rgba="0.3 0.3 0.3 0.8"/>
       </material>
     </visual>
     <collision>
-      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <cylinder radius="0.04" length="0.04"/>
+        <sphere radius="0.05"/>
       </geometry>
     </collision>
-    <xacro:inertial_cylinder mass="0.2" r="0.04" l="0.04"/>
+    <xacro:inertial_sphere mass="0.2" r="0.05"/>
   </link>
 
-  <!-- ===================== 后从动脚轮 右 ===================== -->
-  <joint name="back_right_caster_joint" type="fixed">
+  <!-- ===================== 前从动脚轮 ===================== -->
+  <joint name="front_caster_joint" type="fixed">
     <parent link="base_link"/>
-    <child link="back_right_caster"/>
-    <origin xyz="-0.15 -0.2 0.0" rpy="0 0 0"/>
+    <child link="front_caster"/>
+    <origin xyz="0.20 0.0 0.0" rpy="0 0 0"/>
   </joint>
 
-  <link name="back_right_caster">
+  <link name="front_caster">
     <visual>
-      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <cylinder radius="0.04" length="0.04"/>
+        <sphere radius="0.05"/>
       </geometry>
       <material name="gray"/>
     </visual>
     <collision>
-      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <cylinder radius="0.04" length="0.04"/>
+        <sphere radius="0.05"/>
       </geometry>
     </collision>
-    <xacro:inertial_cylinder mass="0.2" r="0.04" l="0.04"/>
+    <xacro:inertial_sphere mass="0.2" r="0.05"/>
   </link>
 
   <!-- ===================== Laser 激光雷达 ===================== -->
@@ -166,9 +195,12 @@
     <parent link="base_link"/>
     <child link="laser"/>
     <!-- 原来装在 z=0.18：只比车顶(0.10)高 8cm，正好卡在 GPS 盒(0.185~0.215)
-         下方，再叠加车体 1.91° 的永久俯仰（驱动轮 r=0.05、脚轮 r=0.04 不一致
-         导致 atan(0.01/0.30)），扫描平面会擦到自身结构，打出 0.26~0.55m 的
-         近距离回波。抬到 0.26：向后 0.5m 处平面仍有 0.243 > GPS 盒顶 0.215。 -->
+         下方，再叠加当时车体 1.91° 的永久俯仰（驱动轮 r=0.05、脚轮 r=0.04
+         不一致导致 atan(0.01/0.30)），扫描平面会擦到自身结构，打出
+         0.26~0.55m 的近距离回波。抬到 0.26：向后 0.5m 处平面仍有
+         0.243 > GPS 盒顶 0.215。
+         注：脚轮半径已改为 0.05 与驱动轮齐平，上面那个 1.91° 俯仰已经
+         消失；这里保持 0.26 不动，纯粹为了留足余量。 -->
     <origin xyz="0.25 0 0.26" rpy="0 0 0"/>
   </joint>
   <link name="laser">
@@ -231,6 +263,31 @@
 
   <!-- ===================== Gazebo插件：use_gazebo=true才加载 ===================== -->
   <xacro:if value="$(arg use_gazebo)">
+    <!-- 脚轮摩擦设置 ===================================================
+         脚轮关节是 fixed，Gazebo 会把子链接"lump"进 base_link，变成
+         base_link_fixed_joint_lump__*_caster_collision。
+         lump 后它不能滚动、不能转向 —— 本质是一块刚性滑板。实测两个脚轮
+         各顶住 42~53N（车重 113.6N），把驱动轮架到刚好离地，左前轮接触力
+         40.2N 超过 mu*N=38.85N 打滑，于是 v 只剩 65%、w 只剩 25%。
+         解法：碰撞体换成 sphere（各向同性、无"轮缘"卡边），mu 压到 0.01
+         近似自由滚动 —— 这是 Gazebo 里做从动脚轮的标准做法。
+         半径同时由 0.04 改成 0.05 与驱动轮齐平：原来 r 差 1cm、前后轮距 0.30m
+         导致车体恒定俯仰 atan(0.01/0.30)=1.91°（实测 -1.91°，完全吻合）。
+         现在前后脚轮都在中心线上、z=0、r=0.05，且驱动轮也在 z=0，仍然齐平。 -->
+    <gazebo reference="rear_caster">
+      <mu1>0.01</mu1>
+      <mu2>0.01</mu2>
+      <kp>1000000.0</kp>
+      <kd>1.0</kd>
+    </gazebo>
+
+    <gazebo reference="front_caster">
+      <mu1>0.01</mu1>
+      <mu2>0.01</mu2>
+      <kp>1000000.0</kp>
+      <kd>1.0</kd>
+    </gazebo>
+
     <!-- 差速驱动插件 -->
     <gazebo>
       <plugin name="diff_drive" filename="libgazebo_ros_diff_drive.so">

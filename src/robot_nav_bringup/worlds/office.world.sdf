@@ -117,16 +117,24 @@
            1) 尺寸、位置都不同，且都不在 x/y 轴、也不在对角线上；
            2) 两个物体的连线也不经过原点（单一物体理论上仍可能被某个旋转配上）。
          位置挑选：距原点 >=1.9m（不挡 spawn 点），离墙 >=0.4m，
-         高度都覆盖激光扫描面（雷达 z≈0.26，俯仰 -1.91°）。 -->
+         高度都覆盖激光扫描面（雷达 z≈0.26，俯仰 -1.91°）。
+
+         ---- 2026-10-14 实测后放大 ----
+         上面 0.3x0.3 / 0.6x0.35 两个小地标压不住这个简并：用真实 /scan 反投影
+         量到真值与最佳镜像只差 0.13 m/beam（sigma_hit=0.1），全工作空间 12.7%
+         的可达位姿上"镜像比真值更优"，最差 -5.0 nats。放大到 0.7x0.7 / 1.2x0.5
+         并重新选位后，对手胜出降到 3.4%，中位对数似然裕度 6.5 -> 17.1 nats
+         （max_beams=120 时 34.0）。新位置对应 maps/demo_map.pgm 里两个实心
+         矩形，两者必须同步修改。 -->
     <model name="pillar_1">
       <static>true</static>
-      <pose>1.50 1.20 0.50 0 0 0</pose>
+      <pose>1.25 -0.55 0.50 0 0 0</pose>
       <link name="link">
         <collision name="collision">
-          <geometry><box><size>0.3 0.3 1.0</size></box></geometry>
+          <geometry><box><size>0.7 0.7 1.0</size></box></geometry>
         </collision>
         <visual name="visual">
-          <geometry><box><size>0.3 0.3 1.0</size></box></geometry>
+          <geometry><box><size>0.7 0.7 1.0</size></box></geometry>
           <material>
             <ambient>0.7 0.35 0.1 1</ambient>
             <diffuse>0.9 0.5 0.15 1</diffuse>
@@ -137,13 +145,13 @@
 
     <model name="cabinet_1">
       <static>true</static>
-      <pose>-1.70 -0.90 0.225 0 0 0</pose>
+      <pose>-0.65 -1.50 0.225 0 0 0</pose>
       <link name="link">
         <collision name="collision">
-          <geometry><box><size>0.6 0.35 0.45</size></box></geometry>
+          <geometry><box><size>1.2 0.5 0.45</size></box></geometry>
         </collision>
         <visual name="visual">
-          <geometry><box><size>0.6 0.35 0.45</size></box></geometry>
+          <geometry><box><size>1.2 0.5 0.45</size></box></geometry>
           <material>
             <ambient>0.15 0.35 0.6 1</ambient>
             <diffuse>0.2 0.5 0.8 1</diffuse>

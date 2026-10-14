@@ -66,9 +66,22 @@ def generate_launch_description():
         output='screen',
     )
 
+    # AMCL 的初始位姿（见 config/nav2_params.yaml 里的 set_initial_pose）。
+    # nav2_params.yaml 里写死的 initial_pose=(0,0,0) 只在"nav2 启动那一刻机器人正好
+    # 停在出生点"时成立；仿真一直开着、nav2 反复重启时就不成立了。这个节点跟着仿真
+    # 常驻，每次 AMCL 进 ACTIVE 就用当时的 /wheel/odom 真值给它播种，所以 nav2 的启动
+    # 命令不用改，重启几次就重新播几次。
+    amcl_seed_pose = Node(
+        package='robot_nav_bringup',
+        executable='amcl_seed_pose.py',
+        parameters=[{'use_sim_time': True}],
+        output='screen',
+    )
+
     return LaunchDescription([
         gazebo,
-        robot_state_publisher, 
+        robot_state_publisher,
         spawn_robot,
         ekf,
+        amcl_seed_pose,
     ])

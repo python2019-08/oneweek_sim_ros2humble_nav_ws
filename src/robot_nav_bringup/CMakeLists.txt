@@ -27,4 +27,9 @@ install(DIRECTORY launch config worlds
   DESTINATION share/${PROJECT_NAME}
 )
 
+# amcl_seed_pose.py：nav2 每次起来时用 /wheel/odom 真值给 AMCL 播种初始位姿
+install(PROGRAMS scripts/amcl_seed_pose.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 ament_package()

@@ -124,12 +124,12 @@ Visualization Manager:
         Expand Link Details: false
         Expand Tree: false
         Link Tree Style: Links in Alphabetic Order
-        back_left_caster:
+        rear_caster:
           Alpha: 1
           Show Axes: false
           Show Trail: false
           Value: true
-        back_right_caster:
+        front_caster:
           Alpha: 1
           Show Axes: false
           Show Trail: false
@@ -177,9 +177,9 @@ Visualization Manager:
       Frame Timeout: 15
       Frames:
         All Enabled: true
-        back_left_caster:
+        rear_caster:
           Value: true
-        back_right_caster:
+        front_caster:
           Value: true
         base_link:
           Value: true
@@ -206,9 +206,9 @@ Visualization Manager:
         map:
           odom:
             base_link:
-              back_left_caster:
+              rear_caster:
                 {}
-              back_right_caster:
+              front_caster:
                 {}
               front_left_wheel:
                 {}
