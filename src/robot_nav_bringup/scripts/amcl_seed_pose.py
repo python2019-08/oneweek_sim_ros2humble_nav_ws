@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""AMCL 播种位姿：AMCL 每次激活时，用里程计真值替掉写死的 initial_pose。
+"""AMCL 播种位姿：AMCL 每次激活时用里程计真值替掉写死的 initial_pose；
+之后一直盯着，信念一旦跑偏（尤其是被一発手动 /initialpose 带歪）就再播一次。
 
 问题
 ----
@@ -18,7 +19,21 @@ checker 到点就报 "Failed to make progress" -> abort -> 清代价地图 -> �
 ----
 本节点跟着仿真常驻，用 lifecycle 的 get_state 盯着 AMCL：它一进入 ACTIVE 就先逼一帧
 /amcl_pose 对答案，和真值差得远才播种（差得近就不动它——激光估计本来比里程计更有信息
-量，没必要拿真值去覆盖）。nav2 重启几次就重新播几次，**不需要改动 nav2 的启动命令**。
+量，没必要拿真值去覆盖）。播完继续留在 WATCH 态常看，跑偏了再播。**不需要改动 nav2 的
+启动命令**。
+
+为什么还要盯"朝向"（2026-10-14 第二次实测的教训）
+----------------------------------------------
+第一版只比 (x, y) 距离，这一版把 yaw 也拉进来、并且不再"探一次就收工"。翻车现场是：
+14:04:12.73 有一发 /initialpose 把位姿设成 (0.024, -0.025, 172.9°)——位置分毫不差就是
+odom 真值，朝向却和真值差 180°（出生点这一带的地图还残留绕世界原点的对称性）。
+第一版探到"差 0.003 m"就认定对上了，朝向那 180° 根本没看；之后机器人一动，AMCL 的
+粒子云整体落在镜像盆地里，belief 与真值刚性相差 178°，controller 一路
+"Failed to make progress" -> Goal failed。
+用地图做光线投射量过：出生点处"真值位姿"和"绕原点镜像位姿"打出来的雷达，现在只有
+38% 的束相符（改图之前是 80% 相符）——图是能分辨了，但 AMCL 只会做局部更新（没有全局
+重定位），一旦整团粒子都落错盆地，它自己爬不回来（实测 90+ s 没回来）。
+结论：错位姿只能从入口上堵，所以本节点在 ACTIVE 期间常驻比对 xy+yaw。
 
 为什么是"激活之后"而不是"启动时"
 --------------------------------
@@ -48,6 +63,8 @@ condition doesn't really cost us anything"），位姿照常 apply，
 "odom 里的位姿" == "真实世界位姿" == "map 里的位姿"（demo_map 就是照这个世界建的，
 origin=[-2.53,-2.54] + 99x99@0.05 覆盖 ±2.47m）。三者相等是本工程成立的前提，也正是
 原来那句 initial_pose=(0,0,0) 的依据。
+也正因为如此，拿真值去纠 AMCL 是安全的；真机（轮子会打滑）上就得把 watch_enabled
+关掉或放宽阈值。
 
 参数
 ----
@@ -59,15 +76,24 @@ origin=[-2.53,-2.54] + 99x99@0.05 覆盖 ±2.47m）。三者相等是本工程�
   xy_var/yaw_var  播种协方差，默认 0.05 m^2 / 0.02 rad^2
   seed_burst      每次播种连发几条，默认 3（防丢包，够用又不刷屏）
   seed_interval   连发间隔，默认 0.2 s
-  skip_tol        已经比这个还准就不播了，默认 0.10 m
-  verify_tol      播完确认对齐的容差，默认 0.25 m（激光更新后信念有几厘米抖动）
+  skip_tol        激活后探到 xy 比这个还准就不播了，默认 0.10 m
+  yaw_tol         朝向容差：探到 / 盯到 偏差超过它就认为跑偏，默认 0.35 rad ≈ 20°
+  verify_tol      播完确认 xy 对齐的容差，默认 0.25 m（激光更新后信念有几厘米抖动）
   verify_timeout  播完等对齐的上限，默认 6.0 s
   probe_timeout   激活后等 /amcl_pose 的上限，默认 5.0 s；等不到就直接播
-  max_attempts    一次激活最多播几轮，默认 3
+  max_attempts    一次激活（或一轮看门狗）最多播几轮，默认 3
+  watch_enabled   激活后是否常驻盯着，默认 True
+  watch_xy_tol    盯梢时允许的 xy 偏差，默认 0.35 m
+  watch_interval  盯梢间隔，默认 1.0 s
+  watch_persist   偏差要连续保持这么久才动手，默认 2.0 s（滤掉单帧毛刺）
+  watch_stale     信念超过这么久没更新就逼一帧 nomotion update，默认 3.0 s
+  watch_backoff   一轮播种最终没对齐后，隔这么久再让看门狗动手，默认 20.0 s
+  odom_buffer     缓存多少秒的 odom 用来对齐时刻，默认 5.0 s
 """
 
 import math
 import time
+from collections import deque
 
 import rclpy
 from geometry_msgs.msg import PoseWithCovarianceStamped
@@ -78,7 +104,7 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from std_srvs.srv import Empty
 
-WAIT, PROBE, SEED, VERIFY, OFF = 0, 1, 2, 3, 4
+WAIT, PROBE, SEED, VERIFY, WATCH = 0, 1, 2, 3, 4
 
 STATE_NAMES = {
     State.PRIMARY_STATE_UNKNOWN: 'UNKNOWN',
@@ -98,6 +124,15 @@ def yaw_of(q):
                       1.0 - 2.0 * (q.y * q.y + q.z * q.z))
 
 
+def ang_diff(a, b):
+    """a-b 归一化到 (-pi, pi]。"""
+    return math.atan2(math.sin(a - b), math.cos(a - b))
+
+
+def stamp_s(st):
+    return st.sec + st.nanosec * 1e-9
+
+
 class AmclSeedPose(Node):
     def __init__(self):
         super().__init__('amcl_seed_pose')
@@ -110,12 +145,21 @@ class AmclSeedPose(Node):
         self.seed_burst = self.declare_parameter('seed_burst', 3).value
         self.seed_interval = self.declare_parameter('seed_interval', 0.2).value
         self.skip_tol = self.declare_parameter('skip_tol', 0.10).value
+        self.yaw_tol = self.declare_parameter('yaw_tol', 0.35).value
         self.verify_tol = self.declare_parameter('verify_tol', 0.25).value
         self.verify_timeout = self.declare_parameter('verify_timeout', 6.0).value
         self.probe_timeout = self.declare_parameter('probe_timeout', 5.0).value
         self.max_attempts = self.declare_parameter('max_attempts', 3).value
+        self.watch_enabled = self.declare_parameter('watch_enabled', True).value
+        self.watch_xy_tol = self.declare_parameter('watch_xy_tol', 0.35).value
+        self.watch_interval = self.declare_parameter('watch_interval', 1.0).value
+        self.watch_persist = self.declare_parameter('watch_persist', 2.0).value
+        self.watch_stale = self.declare_parameter('watch_stale', 3.0).value
+        self.watch_backoff = self.declare_parameter('watch_backoff', 20.0).value
+        self.odom_buffer = self.declare_parameter('odom_buffer', 5.0).value
 
         self.odom = None
+        self.odom_hist = deque()   # (仿真时刻, x, y, yaw)，用来按时刻对齐真值
         self.amcl = None
         self.amcl_t = 0.0          # 收到 /amcl_pose 的时刻（monotonic）
         self.ready_logged = False
@@ -137,6 +181,14 @@ class AmclSeedPose(Node):
     # ---- 回调 ----------------------------------------------------------
     def on_odom(self, m):
         self.odom = m
+        p = m.pose.pose
+        t = stamp_s(m.header.stamp)
+        self.odom_hist.append((t, p.position.x, p.position.y,
+                               yaw_of(p.orientation)))
+        while len(self.odom_hist) > 8 and t - self.odom_hist[0][0] > self.odom_buffer:
+            self.odom_hist.popleft()
+        while len(self.odom_hist) > 1000:      # 时间戳全为零时的兜底
+            self.odom_hist.popleft()
 
     def on_amcl(self, m):
         self.amcl = m
@@ -147,6 +199,14 @@ class AmclSeedPose(Node):
         p = self.odom.pose.pose
         return (p.position.x, p.position.y, yaw_of(p.orientation))
 
+    def truth_at(self, t):
+        """仿真时刻 t 的里程计真值；没有可用时间戳就退回最新一帧。"""
+        if not self.odom_hist:
+            return None
+        if not t:
+            return self.odom_hist[-1][1:]
+        return min(self.odom_hist, key=lambda s: abs(s[0] - t))[1:]
+
     def belief(self):
         if self.amcl is None:
             return None
@@ -154,15 +214,30 @@ class AmclSeedPose(Node):
         return (p.position.x, p.position.y, yaw_of(p.orientation))
 
     def loc_err(self):
+        """信念与"同一时刻"真值的偏差 (距离 m, 朝向 rad)；缺数据返回 None。
+
+        比的是同一时刻的两边：/amcl_pose 带的是它那帧激光的时刻，就拿那一时刻的
+        odom 来比。机器人走着的时候两边时刻对得上，不会因为更新滞后而假报警。
+        """
         b = self.belief()
         if b is None:
             return None
-        t = self.truth()
-        return math.hypot(b[0] - t[0], b[1] - t[1])
+        t = self.truth_at(stamp_s(self.amcl.header.stamp))
+        if t is None:
+            return None
+        return (math.hypot(b[0] - t[0], b[1] - t[1]), ang_diff(b[2], t[2]))
 
     @staticmethod
     def fmt(p):
         return '(%+.3f, %+.3f, %+.1f deg)' % (p[0], p[1], math.degrees(p[2]))
+
+    @staticmethod
+    def fmt_err(e):
+        return '%.3f m / %+.1f deg' % (e[0], math.degrees(e[1]))
+
+    def off_pose(self, e, xy_tol):
+        """xy 或朝向任一项超容差就算跑偏。"""
+        return e[0] > xy_tol or abs(e[1]) > self.yaw_tol
 
     def publish_pose(self):
         """把当前 /wheel/odom 的位姿原样发到 /initialpose（等价于 rviz 的 2D Pose Estimate）。
@@ -234,6 +309,9 @@ class AmclSeedPose(Node):
         attempts = 0
         t_phase = 0.0
         asked_nomotion = False
+        last_watch = -1e9
+        viol_since = None          # 看门狗：偏差是从什么时候开始持续的
+        watch_ready = 0.0          # 早于这个时刻不让看门狗动手（放弃后的冷却）
 
         while rclpy.ok():
             rclpy.spin_once(self, timeout_sec=0.05)
@@ -259,19 +337,20 @@ class AmclSeedPose(Node):
                 asked_nomotion = self.ask_nomotion(asked_nomotion)
                 e = self.loc_err()
                 if self.amcl_t > t_phase and e is not None:
-                    if e <= self.skip_tol:
+                    if not self.off_pose(e, self.skip_tol):
                         self.get_logger().info(
-                            'AMCL 位姿已经对上了（差 %.3f m），不动它' % e)
+                            'AMCL 位姿已经对上了（差 %s），不动它' % self.fmt_err(e))
                         attempts = 0
-                        st = OFF
+                        viol_since, last_watch = None, now
+                        st = WATCH
                     else:
                         attempts += 1
                         sent = 0
                         last_pub = -1e9
                         self.get_logger().info(
-                            '[%d/%d] AMCL 认为 %s，与真值 %s 差 %.3f m，播种'
+                            '[%d/%d] AMCL 认为 %s，与真值 %s 差 %s，播种'
                             % (attempts, self.max_attempts, self.fmt(self.belief()),
-                               self.fmt(self.truth()), e))
+                               self.fmt(self.truth()), self.fmt_err(e)))
                         st = SEED
                 elif now - t_phase >= self.probe_timeout:
                     attempts += 1
@@ -295,33 +374,63 @@ class AmclSeedPose(Node):
             elif st == VERIFY:
                 asked_nomotion = self.ask_nomotion(asked_nomotion)
                 e = self.loc_err()
-                if self.amcl_t > t_phase and e is not None and e <= self.verify_tol:
+                if (self.amcl_t > t_phase and e is not None
+                        and not self.off_pose(e, self.verify_tol)):
                     self.get_logger().info(
-                        '播种生效：/amcl_pose 与真值差 %.3f m，已对齐' % e)
+                        '播种生效：/amcl_pose 与真值差 %s，已对齐' % self.fmt_err(e))
                     attempts = 0
-                    st = OFF
+                    viol_since, last_watch = None, now
+                    st = WATCH
                 elif now - t_phase >= self.verify_timeout:
                     if attempts < self.max_attempts:
                         self.get_logger().warn(
                             '播种后 %g s 没等到对齐（/amcl_pose 差 %s），再来一次'
                             % (self.verify_timeout,
-                               '%.3f m' % e if e is not None else '未知'))
+                               self.fmt_err(e) if e is not None else '未知'))
                         attempts += 1
                         sent = 0
                         last_pub = -1e9
                         st = SEED
                     else:
                         self.get_logger().warn(
-                            '播了 %d 次都没对齐，放弃自动播种；请确认 AMCL 是否正常，'
-                            '或用 rviz 的 2D Pose Estimate 手动给一次' % attempts)
+                            '播了 %d 次都没对齐，放弃自动播种 %.0f s；'
+                            '请确认 AMCL 是否正常，或用 rviz 的 2D Pose Estimate 给一次'
+                            % (attempts, self.watch_backoff))
                         attempts = 0
-                        st = OFF
+                        viol_since = None
+                        watch_ready = now + self.watch_backoff
+                        st = WATCH
 
-            else:  # OFF：待命。AMCL 一旦离开激活态（重启/关门），下次激活重新走一遍
+            else:  # WATCH：待命 + 常驻盯梢。AMCL 一旦离开激活态（重启/关门），下次激活重走一遍
                 if state != State.PRIMARY_STATE_ACTIVE:
                     self.get_logger().info('AMCL 不在激活态了，等它下次激活再播种')
                     attempts = 0
+                    viol_since = None
                     st = WAIT
+                elif not self.watch_enabled:
+                    pass
+                elif now - last_watch >= self.watch_interval:
+                    last_watch = now
+                    if now - self.amcl_t > self.watch_stale:
+                        # 停着时 AMCL 不发 /amcl_pose（只在动的时候更新），逼它出一帧
+                        self.ask_nomotion(False)
+                    e = self.loc_err()
+                    if e is not None and self.off_pose(e, self.watch_xy_tol):
+                        if viol_since is None:
+                            viol_since = now
+                        elif (now - viol_since >= self.watch_persist
+                                and now >= watch_ready):
+                            attempts = 1
+                            sent = 0
+                            last_pub = -1e9
+                            viol_since = None
+                            self.get_logger().warn(
+                                '看门狗：AMCL 认为 %s，同时刻真值 %s，差 %s，'
+                                '重新播种' % (self.fmt(self.belief()),
+                                          self.fmt(self.truth()), self.fmt_err(e)))
+                            st = SEED
+                    else:
+                        viol_since = None
 
 
 def main():
